@@ -1,0 +1,573 @@
+#!/bin/sh
+
+######### 函数区.开始 #########
+
+# 校验 ROOT 用户
+function validRoot () {
+
+        if [ "$EUID" -ne 0 ]; then
+                return 1
+        fi
+
+        return 0
+
+}
+
+
+# 校验 TUN
+function validTun () {
+
+        if [ -e /dev/net/tun ]; then
+                return 0
+        fi
+
+        return 1
+
+}
+
+
+# 校验系统
+function validOS() {
+
+        if [ ! -e /etc/redhat-release ]; then
+                return 1
+        fi
+
+        for ((i=8; i<99; i++)); do
+                if [ ! "`grep \" $i.\" /etc/redhat-release`" == "" ]; then
+                        return 0
+                fi
+        done
+
+        return 1
+
+}
+
+
+# 校验必备条件
+function validAll() {
+
+        if ! validRoot; then
+                echo "请使用 root 用户安装"
+                return 1
+        fi
+
+        if ! validTun; then
+                echo "系统不支持 TUN 设备"
+                return 1
+        fi
+
+        if ! validOS; then
+                echo "不支持的系统；请使用 CentOS8 或更高的系统安装"
+                return 1
+        fi
+}
+
+
+# 开始安装
+function startInstall() {
+
+        echo ;
+        echo "正在安装 OpenVPN 服务器，请稍候 ..."
+        echo ;
+
+        IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+
+        # PORT=`expr $RANDOM % 2000 + 30000`
+        PORT=1194
+
+        PROTOCOL="tcp"
+
+        CIPHER="AES-256-GCM" #"AES-128-GCM" #
+
+        CERT_CURVE="prime256v1"
+
+        CC_CIPHER="TLS-ECDHE-ECDSA-WITH-AES-256-GCM-SHA384" #"TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256" #
+
+        DH_CURVE="prime256v1"
+
+        HMAC_ALG="SHA384" #"SHA256" #
+
+        EASY_RSA_VERSION="3.0.6"
+
+        NIC=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
+
+        echo -n "▋▋";
+
+        yum install -qy epel-release elrepo-release > /dev/null 2>&1
+
+        echo -n "▋▋";
+
+        # yum update -qy > /dev/null 2>&1
+
+        echo -n "▋▋";
+
+        yum install -qy openvpn openssl wget ca-certificates curl tar langpacks-zh_CN tuned net-tools > /dev/null 2>&1
+
+        echo 'LANG="zh_CN.UTF-8"' > /etc/locale.conf ;
+        echo 'LC_ALL="zh_CN.UTF-8"' >> /etc/locale.conf ;
+        source /etc/locale.conf > /dev/null 2>&1 ;
+
+        if grep -qs "^nogroup:" /etc/group; then
+                NOGROUP=nogroup
+        else
+                NOGROUP=nobody
+        fi
+
+        echo -n "▋▋";
+
+        wget -q -c -N -T 60 --retry-connrefused -t 10 -O $HOME/EasyRSA-unix-v${EASY_RSA_VERSION}.tgz https://github.com/OpenVPN/easy-rsa/releases/download/v${EASY_RSA_VERSION}/EasyRSA-unix-v${EASY_RSA_VERSION}.tgz  > /dev/null 2>&1
+
+        echo -n "▋▋";
+
+        rm -rf $HOME/EasyRSA-v${EASY_RSA_VERSION} > /dev/null 2>&1
+
+        tar xzf $HOME/EasyRSA-unix-v${EASY_RSA_VERSION}.tgz -C $HOME/  > /dev/null 2>&1 || ( echo "下载 EasyRSA-unix-v${EASY_RSA_VERSION}.tgz 文件失败" ; return 1 )
+
+        echo -n "▋▋";
+
+        rm -rf /etc/openvpn/easy-rsa > /dev/null 2>&1
+
+        mkdir -p /etc/openvpn > /dev/null 2>&1
+
+        mv $HOME/EasyRSA-v${EASY_RSA_VERSION} /etc/openvpn/easy-rsa > /dev/null 2>&1
+
+        chown -R root:root /etc/openvpn/easy-rsa/ > /dev/null 2>&1
+
+        # rm -f $HOME/EasyRSA-unix-v${EASY_RSA_VERSION}.tgz > /dev/null 2>&1
+
+        cd /etc/openvpn/easy-rsa/ > /dev/null 2>&1
+
+        echo "set_var EASYRSA_ALGO ec" > vars
+
+        echo "set_var EASYRSA_CURVE $CERT_CURVE" >> vars
+
+        SERVER_CN="cn_$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)"
+
+        SERVER_NAME="server_$(head /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 16 | head -n 1)"
+
+        echo "set_var EASYRSA_REQ_CN $SERVER_CN" >> vars
+
+        echo -n "▋▋";
+
+        ./easyrsa init-pki > /dev/null 2>&1 || return 1
+
+        echo -n "▋▋";
+
+        sed -i 's/^RANDFILE/#RANDFILE/g' pki/openssl-easyrsa.cnf
+
+        echo -n "▋▋";
+
+        ./easyrsa --batch build-ca nopass > /dev/null 2>&1 || return 1
+
+        echo -n "▋▋";
+
+        ./easyrsa build-server-full "$SERVER_NAME" nopass > /dev/null 2>&1 || return 1
+
+        EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl > /dev/null 2>&1 || return 1
+
+        echo -n "▋▋";
+
+        openvpn --genkey --secret /etc/openvpn/tls-crypt.key > /dev/null 2>&1 || return 1
+
+        echo -n "▋▋";
+
+        cp pki/ca.crt pki/private/ca.key "pki/issued/$SERVER_NAME.crt" "pki/private/$SERVER_NAME.key" /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn > /dev/null 2>&1
+
+        chmod 644 /etc/openvpn/crl.pem > /dev/null 2>&1
+
+        echo "port $PORT" > /etc/openvpn/server.conf
+
+        echo "proto $PROTOCOL" >> /etc/openvpn/server.conf
+
+        echo "dev tun
+                tun-mtu 65535
+                user nobody
+                group $NOGROUP
+                persist-key
+                persist-tun
+                keepalive 10 120
+                topology subnet
+                server 10.10.10.0 255.255.255.0
+                ifconfig-pool-persist ipp.txt" >> /etc/openvpn/server.conf
+
+        sed -i 's/^[ \t]*//g' /etc/openvpn/server.conf
+
+        echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server.conf
+        echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server.conf
+
+        echo 'push "redirect-gateway def1 bypass-dhcp"' >> /etc/openvpn/server.conf
+        echo "dh none" >> /etc/openvpn/server.conf
+        echo "ecdh-curve $DH_CURVE" >> /etc/openvpn/server.conf
+        echo "tls-crypt tls-crypt.key 0" >> /etc/openvpn/server.conf
+
+        echo "crl-verify crl.pem
+                ca ca.crt
+                cert $SERVER_NAME.crt
+                key $SERVER_NAME.key
+                auth $HMAC_ALG
+                cipher $CIPHER
+                ncp-ciphers $CIPHER
+                tls-server
+                tls-version-min 1.2
+                tls-cipher $CC_CIPHER
+                status /var/log/openvpn/status.log
+                verb 3" >> /etc/openvpn/server.conf
+
+        sed -i 's/^[ \t]*//g' /etc/openvpn/server.conf
+
+        mkdir -p /var/log/openvpn > /dev/null 2>&1
+
+        echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/20-openvpn.conf
+        echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.d/20-openvpn.conf ;
+        echo 'net.core.default_qdisc=fq' >> /etc/sysctl.d/20-openvpn.conf ;
+
+        systemctl enable tuned > /dev/null 2>&1 ;
+        systemctl start tuned > /dev/null 2>&1 ;
+        tuned-adm profile network-latency > /dev/null 2>&1 ;
+
+        echo -n "▋▋";
+
+        sysctl --system > /dev/null 2>&1
+
+        echo -n "▋▋";
+
+        setenforce 0 > /dev/null 2>&1
+
+        sed -i 's/^SELINUX=.*/SELINUX=disabled/g' /etc/selinux/config
+
+        cp /usr/lib/systemd/system/openvpn-server@.service /etc/systemd/system/openvpn-server@.service > /dev/null 2>&1
+
+        sed -i 's|LimitNPROC|#LimitNPROC|' /etc/systemd/system/openvpn-server@.service
+
+        sed -i 's|/etc/openvpn/server|/etc/openvpn|' /etc/systemd/system/openvpn-server@.service
+
+        echo -n "▋▋";
+
+        systemctl daemon-reload > /dev/null 2>&1
+
+        systemctl restart openvpn-server@server > /dev/null 2>&1
+
+        systemctl enable openvpn-server@server > /dev/null 2>&1
+
+        # firewall-cmd --permanent --add-port=$PORT/$PROTOCOL > /dev/null 2>&1
+
+        if [ "`firewall-cmd --permanent --query-forward-port=port=31001-32000:proto=tcp:toport=1194`" == "no" ]; then firewall-cmd --permanent --add-forward-port=port=31001-32000:proto=tcp:toport=1194 > /dev/null 2>&1 ;  fi ;
+
+        if [ "`firewall-cmd --permanent --query-masquerade`" == "no" ]; then firewall-cmd --permanent --add-masquerade > /dev/null 2>&1 ;  fi ;
+
+        firewall-cmd --reload > /dev/null 2>&1
+
+        echo -n "▋▋";
+
+        echo "" > /etc/openvpn/client-template.txt
+        echo "" >> /etc/openvpn/client-template.txt
+
+        if [[ "$PROTOCOL" = 'udp' ]]; then
+                echo "proto udp" >> /etc/openvpn/client-template.txt
+        elif [[ "$PROTOCOL" = 'tcp' ]]; then
+                echo "proto tcp-client" >> /etc/openvpn/client-template.txt
+        fi
+
+        echo "remote-random
+                tun-mtu 65535
+                dev tun
+                resolv-retry infinite
+                nobind
+                persist-key
+                persist-tun
+                remote-cert-tls server
+                verify-x509-name $SERVER_NAME name
+                auth $HMAC_ALG
+                auth-nocache
+                cipher $CIPHER
+                tls-client
+                tls-version-min 1.2
+                tls-cipher $CC_CIPHER
+                setenv opt block-outside-dns
+                verb 3" >> /etc/openvpn/client-template.txt
+
+        sed -i 's/^[ \t]*//g' /etc/openvpn/client-template.txt
+
+        echo -n "▋▋";
+
+        echo ;
+
+        echo ;
+
+
+        # 批量创建 9 个用户
+        for ((i=1;i<10;i++)); do
+
+                CLIENT="client$i"
+
+                addClient
+
+        done
+
+        echo ;
+        echo "恭喜你！已成功安装 OpenVPN"
+        echo ;
+        echo "查看配置文件，复制内容并保存为本地纯文本文件"
+        echo ;
+        echo "然后导入到 OpenVPN Connect 等客户端，即可使用"
+        echo ;
+        echo ;
+
+        return 0
+
+}
+
+
+# 新建用户
+function addClient () {
+
+        if [ ! -e /etc/openvpn/easy-rsa ]; then
+                echo "还没有安装 EasyRSA，不能新建用户"
+                return 1
+        fi
+
+        cd /etc/openvpn/easy-rsa > /dev/null 2>&1
+
+        ./easyrsa build-client-full "$CLIENT" nopass > /dev/null 2>&1
+
+        cp /etc/openvpn/client-template.txt "$HOME/$CLIENT.ovpn" > /dev/null 2>&1 || return 1
+
+        for ((p=0;p<20;p++)); do
+
+                PORTx=`expr $RANDOM % 1000 + 31001`
+
+                echo "remote $IP $PORTx" >> "$HOME/$CLIENT.ovpn"
+
+        done
+
+        {
+                echo "<ca>"
+                cat "/etc/openvpn/easy-rsa/pki/ca.crt"
+                echo "</ca>"
+
+                echo "<cert>"
+                awk '/BEGIN/,/END/' "/etc/openvpn/easy-rsa/pki/issued/$CLIENT.crt"
+                echo "</cert>"
+
+                echo "<key>"
+                cat "/etc/openvpn/easy-rsa/pki/private/$CLIENT.key"
+                echo "</key>"
+
+                echo "<tls-crypt>"
+                cat /etc/openvpn/tls-crypt.key
+                echo "</tls-crypt>"
+                echo ""
+                echo ""
+
+        } >> "$HOME/$CLIENT.ovpn"
+
+        echo "成功创建 $CLIENT 用户，查看配置文件 cat $HOME/$CLIENT.ovpn"
+
+        return 0
+
+}
+
+
+# 删除用户
+function delClient () {
+
+        if [ ! -e /etc/openvpn/easy-rsa ]; then
+                echo "还没有安装 EasyRSA，不能删除用户"
+                return 0
+        fi
+
+        CLIENT_COUNT=$(tail -n +2 /etc/openvpn/easy-rsa/pki/index.txt | grep -c "^V")
+
+        if [[ "$CLIENT_COUNT" = '0' ]]; then
+                echo "还没有任何用户"
+                return 0
+        fi
+
+        echo "请选择需要删除的用户"
+        echo ;
+
+        tail -n +2 /etc/openvpn/easy-rsa/pki/index.txt | grep "^V" | cut -d '=' -f 2 | nl -s ') ' || return 1
+
+        echo ;
+
+        if [[ "$CLIENT_COUNT" = '1' ]]; then
+                read -rp "请输入一个序号 [1]: " CLIENT_NO
+        else
+                read -rp "请输入一个序号 [1-$CLIENT_COUNT]: " CLIENT_NO
+        fi
+
+        if ! [[ "$CLIENT_NO" =~ ^[0-9]+$ ]]; then
+                echo ;
+                echo "已取消删除用户操作"
+                return 0
+        fi
+
+        if [ $CLIENT_NO -lt 1 ] || [ $CLIENT_NO -gt $CLIENT_COUNT ]; then
+                echo ;
+                echo "无效的序号"
+                return 0
+        fi
+
+
+        CLIENT=$(tail -n +2 /etc/openvpn/easy-rsa/pki/index.txt | grep "^V" | cut -d '=' -f 2 | sed -n "$CLIENT_NO"p)  > /dev/null 2>&1 || return 1
+
+        cd /etc/openvpn/easy-rsa/
+
+        ./easyrsa --batch revoke "$CLIENT"  > /dev/null 2>&1 || return 1
+
+        EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl  > /dev/null 2>&1 || return 1
+
+        rm -f "pki/reqs/$CLIENT.req"  > /dev/null 2>&1 || return 1
+
+        rm -f "pki/private/$CLIENT.key" > /dev/null 2>&1 || return 1
+
+        rm -f "pki/issued/$CLIENT.crt" > /dev/null 2>&1 || return 1
+
+        rm -f /etc/openvpn/crl.pem > /dev/null 2>&1 || return 1
+
+        cp /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn/crl.pem > /dev/null 2>&1 || return 1
+
+        chmod 644 /etc/openvpn/crl.pem > /dev/null 2>&1 || return 1
+
+        rm -f "$HOME/$CLIENT.ovpn" > /dev/null 2>&1 || return 1
+
+        sed -i "s|^$CLIENT,.*||" /etc/openvpn/ipp.txt > /dev/null 2>&1 || return 1
+
+        echo ;
+        echo "用户 $CLIENT 已经被删除"
+}
+
+
+# 删除 OpenVPN
+function delVPN () {
+
+        echo ;
+        read -rp "确定要删除 OpenVPN? [y/n]: " REMOVE
+
+        if [[ "$REMOVE" = 'y' ]]; then
+
+                echo ;
+                echo "正在删除 OpenVPN，请稍候 ..."
+
+                PORT=$(grep '^port ' /etc/openvpn/server.conf | cut -d " " -f 2)
+
+                systemctl disable openvpn-server@server > /dev/null 2>&1
+
+                systemctl stop openvpn-server@server > /dev/null 2>&1
+
+                rm /etc/systemd/system/openvpn-server@.service > /dev/null 2>&1
+
+                systemctl daemon-reload > /dev/null 2>&1
+
+                yum remove -qy openvpn > /dev/null 2>&1
+
+                # firewall-cmd --permanent --remove-port=$PORT/$PROTOCOL > /dev/null 2>&1
+
+                # firewall-cmd --permanent --remove-masquerade > /dev/null 2>&1
+
+                if [ "`firewall-cmd --permanent --query-forward-port=port=31001-32000:proto=tcp:toport=1194`" == "yes" ]; then firewall-cmd --permanent --remove-forward-port=port=31001-32000:proto=tcp:toport=1194 > /dev/null 2>&1 ;  fi ;
+
+                firewall-cmd --reload > /dev/null 2>&1
+
+                find $HOME/ -maxdepth 1 -name "*.ovpn" -delete > /dev/null 2>&1
+
+                rm -rf /etc/openvpn > /dev/null 2>&1
+
+                rm -rf /usr/share/doc/openvpn* > /dev/null 2>&1
+
+                rm -f /etc/sysctl.d/20-openvpn.conf > /dev/null 2>&1
+
+                rm -rf /var/log/openvpn > /dev/null 2>&1
+
+                echo ;
+                echo "已成功删除 OpenVPN"
+
+        else
+
+                echo ;
+                echo "已取消删除 OpenVPN"
+
+        fi
+
+        echo ;
+
+        return 0
+}
+
+# 操作菜单
+function startMenu () {
+
+        clear
+        echo ;
+        echo "系统已经有 OpenVPN，你可以："
+        echo ;
+
+        echo "   1) 新建十个用户"
+        echo "   2) 删除一个用户"
+        echo "   3) 删除 OpenVPN"
+        echo "   4) 退出"
+
+        echo ;
+
+        until [[ "$MENU_NO" =~ ^[1-4]$ ]]; do
+                read -rp "请输入一个序号 [1-4]: " MENU_NO
+        done
+
+        case $MENU_NO in
+                1)
+                        echo ;
+                        read -rp "确定要新建十个用户? [y/n]: " -e  OK
+
+                        if [[ "$OK" = 'y' ]]; then
+                                echo ;
+                                IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1) ;
+                                for ((i=1,x=0;i<1000;i++)); do
+                                        CLIENT=client$i
+                                        if [ ! -f $HOME/$CLIENT.ovpn ]; then
+                                                addClient
+                                                let x=x+1
+                                                if [ "$x" == "10" ]; then break; fi;
+                                        fi
+                                done ;
+                                echo ;
+                                echo "查看配置文件，复制内容并保存为本地纯文本文件"
+                                echo ;
+                                echo "然后导入到 OpenVPN Connect 等客户端，即可使用"
+                                echo ;
+                                echo ;
+                        fi
+
+                        echo ;
+                ;;
+                2)
+                        echo ;
+                        delClient
+                        echo ;
+                ;;
+                3)
+                        delVPN
+                ;;
+                4)
+                        exit 0
+                ;;
+        esac
+}
+
+######### 函数区.结束 #########
+
+
+# 检查必备条件
+validAll
+
+if [[ -e /etc/openvpn/server.conf ]]; then
+
+        startMenu
+
+else
+
+        startInstall
+
+fi
+
+

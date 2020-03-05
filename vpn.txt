@@ -71,8 +71,6 @@ function startInstall() {
         echo "正在安装 OpenVPN 服务器，请稍候 ..."
         echo ;
 
-        IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
-
         # PORT=`expr $RANDOM % 2000 + 30000`
         PORT=1194
 
@@ -90,7 +88,7 @@ function startInstall() {
 
         EASY_RSA_VERSION="3.0.6"
 
-        NIC=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
+        # NIC=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
 
         echo -n "▋▋";
 
@@ -102,7 +100,10 @@ function startInstall() {
 
         echo -n "▋▋";
 
-        yum install -qy openvpn openssl wget ca-certificates curl tar langpacks-zh_CN tuned net-tools > /dev/null 2>&1
+        yum install -qy openvpn openssl wget ca-certificates curl tar langpacks-zh_CN tuned net-tools bind-utils > /dev/null 2>&1
+
+        # IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1)
+	IP=`dig TXT +short o-o.myaddr.l.google.com @ns1.google.com | tr -d '"*[:space:]*'`
 
         echo 'LANG="zh_CN.UTF-8"' > /etc/locale.conf ;
         echo 'LC_ALL="zh_CN.UTF-8"' >> /etc/locale.conf ;
@@ -308,9 +309,9 @@ function startInstall() {
         echo ;
         echo "恭喜你！已成功安装 OpenVPN"
         echo ;
-        echo "查看配置文件，复制内容并保存为本地纯文本文件"
+        echo "查看配置文件，复制内容并保存为本地同名文件"
         echo ;
-        echo "然后导入到 OpenVPN Connect 等客户端，即可使用"
+        echo "使用 OpenVPN Connect 等客户端导入文件，即可连接"
         echo ;
         echo ;
 
@@ -362,7 +363,7 @@ function addClient () {
 
         } >> "$HOME/$CLIENT.ovpn"
 
-        echo "成功创建 $CLIENT 用户，查看配置文件 cat $HOME/$CLIENT.ovpn"
+        echo "成功创建 $CLIENT 用户，查看配置文件 cat $CLIENT.ovpn"
 
         return 0
 
@@ -521,7 +522,8 @@ function startMenu () {
 
                         if [[ "$OK" = 'y' ]]; then
                                 echo ;
-                                IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1) ;
+                                # IP=$(ip addr | grep 'inet' | grep -v inet6 | grep -vE '127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | head -1) ;
+				IP=`dig TXT +short o-o.myaddr.l.google.com @ns1.google.com | tr -d '"*[:space:]*'`
                                 for ((i=1,x=0;i<1000;i++)); do
                                         CLIENT=client$i
                                         if [ ! -f $HOME/$CLIENT.ovpn ]; then
@@ -531,9 +533,9 @@ function startMenu () {
                                         fi
                                 done ;
                                 echo ;
-                                echo "查看配置文件，复制内容并保存为本地纯文本文件"
+                                echo "查看配置文件，复制内容并保存为本地同名文件"
                                 echo ;
-                                echo "然后导入到 OpenVPN Connect 等客户端，即可使用"
+                                echo "使用 OpenVPN Connect 等客户端导入文件，即可连接"
                                 echo ;
                                 echo ;
                         fi
@@ -569,5 +571,4 @@ else
         startInstall
 
 fi
-
 

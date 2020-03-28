@@ -1,8 +1,8 @@
 # OpenVPN 服务器一键安装脚本
 
-首先创建一个 CentOS 8 云服务器
+购买一个 5 美元的 CentOS 8 云服务器
 
-https://www.vultr.com/?ref=7115062
+购买地址 https://www.vultr.com/?ref=7115062
 
 然后执行一键安装命令：
 

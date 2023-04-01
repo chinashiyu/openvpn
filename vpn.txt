@@ -33,7 +33,7 @@ function validOS() {
                 return 1
         fi
 
-        for ((i=8; i<99; i++)); do
+        for ((i=7; i<99; i++)); do
                 if [ ! "`grep \" $i.\" /etc/redhat-release`" == "" ]; then
                         return 0
                 fi
